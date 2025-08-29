@@ -1,3 +1,5 @@
+### NOTA: Este repositorio debe clonarse en /home/pi/
+
 # Comandos para configurar servicio de chequeo de conexión en Sensing
 
 
