@@ -15,7 +15,7 @@ HOSTVPN = "10.8.0.1"
 #HOST=HOSTVPN
 PORT = 80
 RETRY_INTERVAL = 30        # Tiempo en segundos entre reintentos
-ACTION_INTERVALS = [120, 240, 360]  # Intervalos de tiempo en segundos (2, 4, 6 minutos) para realizar acciones
+ACTION_INTERVALS = [120, 240, 540]  # Intervalos de tiempo en segundos (2, 4, 9 minutos) para realizar acciones
 
 ####################
 logger = logging.getLogger("ipc conn check" )
@@ -157,12 +157,12 @@ def perform_action(action_id):
 
     global  failure_start_time, action_done
     if action_id == 1:
-        logger.info("Realizando accion 1 (5 minutos)...")
+        logger.info("Realizando accion 1 (2 minutos)...")
 
         action_soft_reset()
         # subprocess.run(['sudo', 'systemctl', 'restart', 'networking'])
     elif action_id == 2:
-        logger.info("Realizando accion 2 (10 minutos)...")
+        logger.info("Realizando accion 2 (4 minutos)...")
 
         action_modem_hard_reset()
         time.sleep(60)
@@ -170,7 +170,7 @@ def perform_action(action_id):
             action_soft_reset()
 
     elif action_id == 3:
-        logger.info("Realizando accion 3 (15 minutos)...")
+        logger.info("Realizando accion 3 (9 minutos)...")
 
         if horario_permite_rebootear():
             logger.info("rebooteando")
