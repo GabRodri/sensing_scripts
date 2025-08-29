@@ -32,6 +32,40 @@ logger.addHandler(consoleHandler)
 failure_start_time = None
 action_done = [False, False, False]
 
+def check_connectivity_via_wwan(interface="wwan0"):
+    try:
+        # Ejecuta "ip addr show wwan0"
+        process = subprocess.Popen(
+            ["ip", "addr", "show", interface],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        stdout, stderr = process.communicate()
+
+        if process.returncode != 0:
+            logger.info("La interfaz %s no existe" % interface)
+            return False
+
+        # Verificar si está "UP"
+        if "state UP" not in stdout:
+            logger.info("La interfaz %s existe pero está inactiva" % interface)
+            return False
+
+        # Buscar dirección IP (inet)
+        match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", stdout)
+        if match:
+            ip = match.group(1)
+            logger.info("La interfaz %s está activa - IP: %s" % (interface, ip))
+            return True
+        else:
+            logger.info("La interfaz %s está activa pero sin IP asignada " % interface)
+            return False
+
+    except Exception as e:
+        logger.info("Error al verificar la interfaz %s: %s" % (interface, str(e)))
+        return False
+
+
 def check_connectivity_via_ping(host, count=2):
     successful_pings=0
     try:
@@ -149,7 +183,7 @@ def main():
     global  failure_start_time,action_done
 
     while True:
-        if not check_connectivity_via_ping(HOST):
+        if not check_connectivity_via_wwan():
             RETRY_INTERVAL=15
             logger.info("No Pong Error")
             if failure_start_time is None:
