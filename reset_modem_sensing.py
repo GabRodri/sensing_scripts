@@ -5,6 +5,7 @@ import subprocess
 import time
 import sys
 import re
+import traceback
 from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
@@ -46,23 +47,24 @@ def check_connectivity_via_wwan(interface="wwan0"):
             logger.info("La interfaz %s no existe" % interface)
             return False
 
-        # Verificar si está "UP"
+        # Verificar si esta "UP"
         if "state UP" not in stdout:
-            logger.info("La interfaz %s existe pero está inactiva" % interface)
+            logger.info("La interfaz %s existe pero esta inactiva" % interface)
             return False
 
-        # Buscar dirección IP (inet)
+        # Buscar direccion IP (inet)
         match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", stdout)
         if match:
             ip = match.group(1)
-            logger.info("La interfaz %s está activa - IP: %s" % (interface, ip))
+            logger.info("La interfaz %s esta activa - IP: %s" % (interface, ip))
             return True
         else:
-            logger.info("La interfaz %s está activa pero sin IP asignada " % interface)
+            logger.info("La interfaz %s esta activa pero sin IP asignada " % interface)
             return False
 
     except Exception as e:
         logger.info("Error al verificar la interfaz %s: %s" % (interface, str(e)))
+        logger.info(traceback.format_exc())
         return False
 
 
