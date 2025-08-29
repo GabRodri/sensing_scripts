@@ -1,5 +1,9 @@
 ### NOTA: Este repositorio debe clonarse en /home/pi/
 
+cd /home/pi
+
+git clone https://github.com/GabRodri/sensing_scripts.git
+
 # Comandos para configurar servicio de chequeo de conexión en Sensing
 
 cd /home/pi/sensing_scripts
