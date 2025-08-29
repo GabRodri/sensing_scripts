@@ -48,9 +48,9 @@ def check_connectivity_via_wwan(interface="wwan0"):
             return False
 
         # Verificar si esta "UP"
-        if "state UP" not in stdout:
-            logger.info("La interfaz %s existe pero esta inactiva" % interface)
-            return False
+        # if "state UP" not in stdout:
+        #     logger.info("La interfaz %s existe pero esta inactiva" % interface)
+        #     return False
 
         # Buscar direccion IP (inet)
         match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", stdout)
