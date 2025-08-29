@@ -2,6 +2,9 @@
 
 # Comandos para configurar servicio de chequeo de conexión en Sensing
 
+cd /home/pi/sensing_scripts
+
+chmod +x reset_modem_sensing.sh
 
 cd /etc/systemd/system
 
