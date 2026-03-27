@@ -1,4 +1,3 @@
-pi@sensingOCPPmedio:~/sensing_scripts $ cat reset_modem_sensing.py
 #!/usr/bin/python2.7
 
 import socket
