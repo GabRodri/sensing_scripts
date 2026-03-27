@@ -1,3 +1,4 @@
+pi@sensingOCPPmedio:~/sensing_scripts $ cat reset_modem_sensing.py
 #!/usr/bin/python2.7
 
 import socket
@@ -5,7 +6,6 @@ import subprocess
 import time
 import sys
 import re
-import traceback
 from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
@@ -15,10 +15,10 @@ HOSTVPN = "10.8.0.1"
 #HOST=HOSTVPN
 PORT = 80
 RETRY_INTERVAL = 30        # Tiempo en segundos entre reintentos
-ACTION_INTERVALS = [120, 240, 540]  # Intervalos de tiempo en segundos (2, 4, 9 minutos) para realizar acciones
+ACTION_INTERVALS = [120, 240, 360]  # Intervalos de tiempo en segundos (2, 4, 6 minutos) para realizar acciones
 
 ####################
-logger = logging.getLogger("sensing conn check" )
+logger = logging.getLogger("ipc conn check" )
 logger.setLevel(logging.INFO)
 handler = RotatingFileHandler('check_connectivity.log',maxBytes=10000000, backupCount=2)
 handler.setLevel(logging.INFO)
@@ -32,41 +32,6 @@ logger.addHandler(consoleHandler)
 
 failure_start_time = None
 action_done = [False, False, False]
-
-def check_connectivity_via_wwan(interface="wwan0"):
-    try:
-        # Ejecuta "ip addr show wwan0"
-        process = subprocess.Popen(
-            ["ip", "addr", "show", interface],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
-        stdout, stderr = process.communicate()
-
-        if process.returncode != 0:
-            logger.info("La interfaz %s no existe" % interface)
-            return False
-
-        # Verificar si esta "UP"
-        # if "state UP" not in stdout:
-        #     logger.info("La interfaz %s existe pero esta inactiva" % interface)
-        #     return False
-
-        # Buscar direccion IP (inet)
-        match = re.search(r"inet (\d+\.\d+\.\d+\.\d+)", stdout)
-        if match:
-            ip = match.group(1)
-            logger.info("La interfaz %s esta activa - IP: %s" % (interface, ip))
-            return True
-        else:
-            logger.info("La interfaz %s esta activa pero sin IP asignada " % interface)
-            return False
-
-    except Exception as e:
-        logger.info("Error al verificar la interfaz %s: %s" % (interface, str(e)))
-        logger.info(traceback.format_exc())
-        return False
-
 
 def check_connectivity_via_ping(host, count=2):
     successful_pings=0
@@ -170,7 +135,7 @@ def perform_action(action_id):
             action_soft_reset()
 
     elif action_id == 3:
-        logger.info("Realizando accion 3 (9 minutos)...")
+        logger.info("Realizando accion 3 (6 minutos)...")
 
         if horario_permite_rebootear():
             logger.info("rebooteando")
@@ -185,7 +150,7 @@ def main():
     global  failure_start_time,action_done
 
     while True:
-        if not check_connectivity_via_wwan():
+        if not check_connectivity_via_ping(HOST):
             RETRY_INTERVAL=15
             logger.info("No Pong Error")
             if failure_start_time is None:
