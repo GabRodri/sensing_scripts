@@ -72,7 +72,7 @@ def poll_device(slave_id, cfg):
                 continue
 
             for start, count in REGISTER_BLOCKS:
-                result = client.read_holding_registers(start, count, **{UNIT_KW: cfg["unit_id"]})
+                result = client.read_holding_registers(start, count=count, **{UNIT_KW: cfg["unit_id"]})
                 if not result.isError():
                     context[slave_id].setValues(3, start, result.registers)
                     log.info(f"[{cfg['name']}] Bloque {start}-{start+count-1} OK")
