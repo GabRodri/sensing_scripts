@@ -35,7 +35,7 @@ DS_SIZE = 4239 - 4105  # 134 registros
 POLL_INTERVAL = 5
 
 SERVER_HOST = "0.0.0.0"
-SERVER_PORT = 502
+SERVER_PORT = 11234
 
 
 def create_context():
@@ -56,7 +56,7 @@ async def poll_device(client, device_cfg, context, slave_id):
     for start, count in REGISTER_BLOCKS:
         try:
             result = await client.read_holding_registers(
-                start, count, slave=device_cfg["unit_id"]
+                address=start, count=count, slave=device_cfg["unit_id"]
             )
             if not result.isError():
                 context[slave_id].setValues(3, start, result.registers)
