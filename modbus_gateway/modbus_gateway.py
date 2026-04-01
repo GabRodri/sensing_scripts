@@ -1,9 +1,11 @@
 try:
     from pymodbus.server.sync import StartTcpServer
     from pymodbus.client.sync import ModbusTcpClient
+    UNIT_KW = "unit"
 except ImportError:
     from pymodbus.server import StartTcpServer
     from pymodbus.client import ModbusTcpClient
+    UNIT_KW = "slave"
 from pymodbus.datastore import ModbusServerContext, ModbusSlaveContext, ModbusSequentialDataBlock
 from pymodbus.device import ModbusDeviceIdentification
 import logging
@@ -70,7 +72,7 @@ def poll_device(slave_id, cfg):
                 continue
 
             for start, count in REGISTER_BLOCKS:
-                result = client.read_holding_registers(address=start, count=count, unit=cfg["unit_id"])
+                result = client.read_holding_registers(start, count, **{UNIT_KW: cfg["unit_id"]})
                 if not result.isError():
                     context[slave_id].setValues(3, start, result.registers)
                     log.info(f"[{cfg['name']}] Bloque {start}-{start+count-1} OK")
