@@ -16,12 +16,15 @@ DEVICES = {
     2: {"host": "10.10.12.99", "port": 502, "unit_id": 1, "name": "MU2_SE1"},
 }
 
-# Bloques de registros a leer (start, count)
-# Bloque 1: tensiones, corrientes, FP, potencias, energías (4105-4162)
-# Bloque 2: THD tensión y corriente (4227-4238)
+# Registros específicos ABB PowerMeter (address, type)
+# Agrupados en bloques consecutivos para minimizar lecturas
 REGISTER_BLOCKS = [
-    (4105, 58),   # 4105..4162
-    (4227, 12),   # 4227..4238
+    (4105, 6),    # tensionCompuesta12, 13, 23
+    (4113, 8),    # corriente1, 2, 3, factorPotencia
+    (4143, 2),    # potenciaActivaKW
+    (4151, 2),    # potenciaReactivaKVAR
+    (4159, 4),    # energiaActivaKWH, energiaReactivaKVARH
+    (4227, 12),   # thdTC12, 13, 23, thdCorriente1, 2, 3
 ]
 
 # Datastore: rango continuo que cubre todos los registros
