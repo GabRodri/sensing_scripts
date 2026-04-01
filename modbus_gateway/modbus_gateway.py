@@ -56,7 +56,7 @@ async def poll_device(client, device_cfg, context, slave_id):
     for start, count in REGISTER_BLOCKS:
         try:
             result = await client.read_holding_registers(
-                address=start, count=count, slave=device_cfg["unit_id"]
+                start, count=count, slave=device_cfg["unit_id"]
             )
             if not result.isError():
                 context[slave_id].setValues(3, start, result.registers)
