@@ -1,13 +1,17 @@
-from pymodbus.server.sync import StartTcpServer
+try:
+    from pymodbus.server.sync import StartTcpServer
+    from pymodbus.client.sync import ModbusTcpClient
+except ImportError:
+    from pymodbus.server import StartTcpServer
+    from pymodbus.client import ModbusTcpClient
 from pymodbus.datastore import ModbusServerContext, ModbusSlaveContext, ModbusSequentialDataBlock
 from pymodbus.device import ModbusDeviceIdentification
-from pymodbus.client.sync import ModbusTcpClient
 import logging
 import time
 import threading
 
 # ============================================
-# CONFIGURACIÓN
+# CONFIGURACIoN
 # ============================================
 
 # Multimedidores ABB (Modbus TCP)
@@ -16,7 +20,7 @@ DEVICES = {
     2: {"host": "10.10.12.99", "port": 502, "unit_id": 1, "name": "MU2_SE1"},
 }
 
-# Registros específicos ABB PowerMeter (address, type)
+# Registros especificos ABB PowerMeter (address, type)
 # Agrupados en bloques consecutivos para minimizar lecturas
 REGISTER_BLOCKS = [
     (4105, 6),    # tensionCompuesta12, 13, 23
@@ -79,7 +83,7 @@ def poll_device(slave_id, cfg):
         time.sleep(UPDATE_INTERVAL)
 
 # ============================================
-# IDENTIFICACIÓN TCP
+# IDENTIFICACIoN TCP
 # ============================================
 identity = ModbusDeviceIdentification()
 identity.VendorName = "Sensing Gateway"
