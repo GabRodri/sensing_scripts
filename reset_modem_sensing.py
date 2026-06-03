@@ -17,7 +17,7 @@ RETRY_INTERVAL = 30        # Tiempo en segundos entre reintentos
 ACTION_INTERVALS = [120, 240, 360]  # Intervalos de tiempo en segundos (2, 4, 6 minutos) para realizar acciones
 
 ####################
-logger = logging.getLogger("ipc conn check" )
+logger = logging.getLogger("sensing conn check" )
 logger.setLevel(logging.INFO)
 handler = RotatingFileHandler('check_connectivity.log',maxBytes=10000000, backupCount=2)
 handler.setLevel(logging.INFO)
