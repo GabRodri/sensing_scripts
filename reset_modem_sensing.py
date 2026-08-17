@@ -25,6 +25,9 @@ GPIO_MODEM = "10"          # GPIO del HAT conectado al modem
 GPIO_PULSO_S = 0.3         # Ancho del pulso. RESET_N del EC25: 150-460 ms
                            # (si el pin fuera PWRKEY habria que subirlo a 1.0)
 
+RUTA_FIX_SIM = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                            "fix_sim_missing.py")
+
 ####################
 logger = logging.getLogger("sensing conn check" )
 logger.setLevel(logging.INFO)
@@ -40,6 +43,7 @@ logger.addHandler(consoleHandler)
 
 failure_start_time = None
 action_done = []
+sim_fix_intentado = False
 
 def check_connectivity_via_wwan(interface="wwan0"):
     try:
@@ -140,11 +144,11 @@ def resumir_salida(salida, limite=200):
     texto = " | ".join(l.strip() for l in str(salida).splitlines() if l.strip())
     if not texto:
         return ""
-    if len(texto) > limite:
+    if limite and len(texto) > limite:   # limite=0 -> sin recorte
         texto = texto[:limite] + "..."
     return " -> %s" % texto
 
-def run_command(command, descripcion=None):
+def run_command(command, descripcion=None, limite=200):
     """Ejecuta un comando y DEJA CONSTANCIA del resultado en el log.
 
     Antes el retorno se descartaba en los 5 llamados, asi que un fallo de
@@ -153,10 +157,11 @@ def run_command(command, descripcion=None):
     etiqueta = descripcion if descripcion else " ".join(command)
     try:
         output = subprocess.check_output(command, stderr=subprocess.STDOUT)
-        logger.info("OK    [%s]%s" % (etiqueta, resumir_salida(output)))
+        logger.info("OK    [%s]%s" % (etiqueta, resumir_salida(output, limite)))
         return (True, output)
     except subprocess.CalledProcessError as e:
-        logger.info("FALLO [%s] rc=%s%s" % (etiqueta, e.returncode, resumir_salida(e.output)))
+        logger.info("FALLO [%s] rc=%s%s" % (etiqueta, e.returncode,
+                                            resumir_salida(e.output, limite)))
         return (False, e.output)
     except Exception as e:
         logger.info("FALLO [%s] excepcion: %s" % (etiqueta, str(e)))
@@ -252,6 +257,55 @@ def action_soft_reset():
     run_command(['systemctl', 'restart', 'ModemManager'])
     time.sleep(10)
     levantar_conexion()
+
+def razon_falla_modem():
+    """Devuelve el 'failed reason' que reporta ModemManager, o None."""
+    idx = indice_modem()
+    if idx is None:
+        return None
+    ok, salida = run_command(['mmcli', '-m', idx], "mmcli -m %s" % idx, limite=120)
+    if not ok:
+        return None
+    match = re.search(r"failed reason:\s*(\S+)", str(salida))
+    return match.group(1) if match else None
+
+def action_fix_sim_missing():
+    """Nivel 3: solo actua si ModemManager reporta 'sim-missing'.
+
+    No es un peldaño mas: es un diagnostico. Si la SIM no inicializa, ningun
+    reset del modulo, del USB ni de la Pi va a servir, asi que no tiene
+    sentido seguir escalando a ciegas. El workaround (AT+QSIMVOL) esta en
+    fix_sim_missing.py, que a su vez se niega a tocar un modem sano.
+
+    Se intenta una sola vez por corrida: el fix incluye un CFUN=1,1 y no
+    corresponde reiniciar el modulo en cada vuelta de la escalera.
+    """
+    global sim_fix_intentado
+
+    razon = razon_falla_modem()
+    if razon != "sim-missing":
+        logger.info("El modem no reporta sim-missing (razon: %s) - se omite este nivel" % razon)
+        return
+
+    if sim_fix_intentado:
+        logger.info("El fix de sim-missing ya se intento en esta corrida - se omite")
+        return
+
+    if not os.path.exists(RUTA_FIX_SIM):
+        logger.info("No se encuentra %s - se omite" % RUTA_FIX_SIM)
+        return
+
+    sim_fix_intentado = True
+    logger.info("sim-missing detectado - aplicando el workaround de QSIMVOL")
+    # 'timeout' acota la corrida: subprocess de Python 2.7 no soporta timeout
+    # y un cuelgue aca dejaria el watchdog trabado para siempre.
+    ok = run_command(['timeout', '300', 'python3', RUTA_FIX_SIM, '--apply'],
+                     "fix_sim_missing.py --apply", limite=0)[0]
+    if ok:
+        levantar_conexion()
+    else:
+        logger.info("El fix de sim-missing no resolvio: el equipo necesita banco "
+                    "(revisar portasim y soldaduras)")
 
 def action_modem_disable_enable():
     """Nivel 3: disable/enable del modem (equivale a CFUN=4 / CFUN=1)."""
@@ -353,15 +407,16 @@ def action_reboot():
 ACCIONES = [
     (120,  "bearer nmcli down/up",        action_bearer_reset),
     (240,  "soft reset ModemManager",     action_soft_reset),
-    (360,  "modem disable/enable",        action_modem_disable_enable),
-    (540,  "modem reset (CFUN=1,1)",      action_modem_reset_mm),
-    (780,  "reset USB del modem",         action_modem_reset_usb),
-    (1080, "hard reset por GPIO",         action_modem_hard_reset),
-    (1500, "reboot (ultimo recurso)",     action_reboot),
+    (360,  "fix sim-missing (QSIMVOL)",   action_fix_sim_missing),
+    (480,  "modem disable/enable",        action_modem_disable_enable),
+    (660,  "modem reset (CFUN=1,1)",      action_modem_reset_mm),
+    (900,  "reset USB del modem",         action_modem_reset_usb),
+    (1200, "hard reset por GPIO",         action_modem_hard_reset),
+    (1620, "reboot (ultimo recurso)",     action_reboot),
 ]
 
 def main():
-    global failure_start_time, action_done
+    global failure_start_time, action_done, sim_fix_intentado
 
     action_done = [False] * len(ACCIONES)
     logger.info("=== Watchdog iniciado (PID %s) - %d niveles de escalera ===" % (
@@ -401,6 +456,7 @@ def main():
             logger.info("Pong")
             failure_start_time = None
             action_done = [False] * len(ACCIONES)
+            sim_fix_intentado = False
 
         time.sleep(retry)
 
