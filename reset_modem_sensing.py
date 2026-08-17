@@ -19,7 +19,11 @@ RETRY_INTERVAL_OK = 30     # Tiempo en segundos entre chequeos cuando hay conexi
 RETRY_INTERVAL_FALLA = 15  # Tiempo en segundos entre chequeos cuando no hay conexion
 
 CONEXION_NM = "LTE"        # Nombre de la conexion en NetworkManager
-VENDOR_QUECTEL = "2c7c"    # idVendor del modem en el bus USB
+VENDOR_QUECTEL = "2c7c"    # idVendor del modem en el bus USB (Quectel EC25-AUX)
+
+GPIO_MODEM = "10"          # GPIO del HAT conectado al modem
+GPIO_PULSO_S = 0.3         # Ancho del pulso. RESET_N del EC25: 150-460 ms
+                           # (si el pin fuera PWRKEY habria que subirlo a 1.0)
 
 ####################
 logger = logging.getLogger("sensing conn check" )
@@ -212,6 +216,20 @@ def buscar_puerto_usb_modem():
         logger.info("Error buscando el modem en el bus USB: %s" % str(e))
     return None
 
+def esperar_modem_usb(presente, timeout):
+    """Espera a que el modem aparezca (presente=True) o desaparezca del bus USB.
+
+    Devuelve True si se cumplio dentro del timeout. Sirve para comprobar si un
+    reset por hardware llego de verdad al modulo: un reset real lo hace
+    desaparecer del bus unos segundos y despues reenumerar.
+    """
+    fin = time.time() + timeout
+    while time.time() < fin:
+        if (buscar_puerto_usb_modem() is not None) == presente:
+            return True
+        time.sleep(0.5)
+    return False
+
 def levantar_conexion():
     run_command(['nmcli', 'connection', 'up', CONEXION_NM])
 
@@ -282,20 +300,40 @@ def action_modem_reset_usb():
     levantar_conexion()
 
 def action_modem_hard_reset():
-    """Nivel 6: reset por GPIO.
+    """Nivel 6: pulso por GPIO al modem, con verificacion.
 
-    PENDIENTE: verificar contra el esquematico del HAT a que pin del modulo
-    llega el GPIO 10 (PWRKEY / RESET_N / nada) y ajustar los tiempos. Los
-    272 intentos del 15/08 no tuvieron ningun efecto medible.
+    Timing corregido al spec del EC25: RESET_N pide 150-460 ms. Los 5 s que
+    habia antes se pasaban diez veces del maximo.
+
+    PENDIENTE: confirmar contra el esquematico del HAT a que pin del modulo
+    llega el GPIO 10. La evidencia dice que hoy no llega a ninguno: en la
+    caida del 15/08 esta accion corrio 272 veces y wwan0 no desaparecio ni
+    una sola vez. Por eso ahora se comprueba si el modulo se cae del bus
+    USB despues del pulso, que es lo unico que prueba que el reset llego.
     """
-    run_command(['raspi-gpio', 'set', '10', 'pd'])          # raspi-gpio set 10 pd
+    puerto = buscar_puerto_usb_modem()
+    logger.info("Pulso de %.2f s en el GPIO %s (modem en el bus USB: %s)" % (
+        GPIO_PULSO_S, GPIO_MODEM, puerto))
+
+    run_command(['raspi-gpio', 'set', GPIO_MODEM, 'pd'])
     time.sleep(0.5)
-    run_command(['raspi-gpio', 'set', '10', 'op', 'dl'])    # raspi-gpio set 10 op dl
-    time.sleep(5)
-    run_command(['raspi-gpio', 'set', '10', 'dh'])          # raspi-gpio set 10 dh
-    time.sleep(5)
-    run_command(['raspi-gpio', 'set', '10', 'dl'])          # raspi-gpio set 10 dl
-    time.sleep(5)
+    run_command(['raspi-gpio', 'set', GPIO_MODEM, 'op', 'dl'])
+    time.sleep(0.5)
+    run_command(['raspi-gpio', 'set', GPIO_MODEM, 'dh'])
+    time.sleep(GPIO_PULSO_S)
+    run_command(['raspi-gpio', 'set', GPIO_MODEM, 'dl'])
+
+    if esperar_modem_usb(False, 30):
+        logger.info("GPIO %s: el modem se reseteo, desaparecio del bus USB" % GPIO_MODEM)
+        if esperar_modem_usb(True, 60):
+            logger.info("GPIO %s: el modem reenumero en %s" % (
+                GPIO_MODEM, buscar_puerto_usb_modem()))
+        else:
+            logger.info("GPIO %s: el modem NO volvio a enumerar en 60 s" % GPIO_MODEM)
+    else:
+        logger.info("GPIO %s: el modem NO desaparecio del bus USB en 30 s - "
+                    "el pulso no esta llegando al modulo" % GPIO_MODEM)
+
     action_soft_reset()
 
 def action_reboot():
