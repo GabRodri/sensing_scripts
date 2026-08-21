@@ -21,8 +21,16 @@ CONEXION_NM = "LTE"        # Nombre de la conexion en NetworkManager
 VENDOR_QUECTEL = "2c7c"    # idVendor del modem en el bus USB (Quectel EC25-AUX)
 
 GPIO_MODEM = "10"          # GPIO del HAT conectado al modem
-GPIO_PULSO_S = 0.3         # Ancho del pulso. RESET_N del EC25: 150-460 ms
-                           # (si el pin fuera PWRKEY habria que subirlo a 1.0)
+GPIO_PULSO_S = 5.0         # Ancho del pulso.
+                           # El spec del EC25 pide 150-460 ms para RESET_N y
+                           # >=500 ms para PWRKEY, asi que 5 s esta fuera de
+                           # rango en los dos casos. PERO en el 199 el pulso de
+                           # 5 s es lo unico que se midio resolviendo el corte
+                           # diario (8 recuperaciones, de 4:15 a 5:30). Hasta
+                           # tener el esquematico del HAT y una prueba real,
+                           # manda la evidencia del equipo y no la hoja de
+                           # datos: bajarlo a 0.3 sin probar arriesga romper la
+                           # unica recuperacion que hoy funciona.
 
 DIR_SCRIPT = os.path.dirname(os.path.abspath(__file__))
 RUTA_FIX_SIM = os.path.join(DIR_SCRIPT, "fix_sim_missing.py")
