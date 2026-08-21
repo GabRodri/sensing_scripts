@@ -1,7 +1,6 @@
 #!/usr/bin/python2.7
 
 import os
-import socket
 import subprocess
 import time
 import sys
@@ -11,10 +10,10 @@ from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
 
-HOST = '8.8.8.8'
-HOSTVPN = "10.8.0.1"
-#HOST=HOSTVPN
-PORT = 80
+HOST = "10.220.0.17"       # broker MQTT: responde ICMP y es lo que importa que ande
+PING_COUNT = 2
+PING_TIMEOUT = 5           # -W, para que un destino muerto no cuelgue la vuelta del loop
+
 RETRY_INTERVAL_OK = 30     # Tiempo en segundos entre chequeos cuando hay conexion
 RETRY_INTERVAL_FALLA = 15  # Tiempo en segundos entre chequeos cuando no hay conexion
 
@@ -25,13 +24,14 @@ GPIO_MODEM = "10"          # GPIO del HAT conectado al modem
 GPIO_PULSO_S = 0.3         # Ancho del pulso. RESET_N del EC25: 150-460 ms
                            # (si el pin fuera PWRKEY habria que subirlo a 1.0)
 
-RUTA_FIX_SIM = os.path.join(os.path.dirname(os.path.abspath(__file__)),
-                            "fix_sim_missing.py")
+DIR_SCRIPT = os.path.dirname(os.path.abspath(__file__))
+RUTA_FIX_SIM = os.path.join(DIR_SCRIPT, "fix_sim_missing.py")
 
 ####################
 logger = logging.getLogger("sensing conn check" )
 logger.setLevel(logging.INFO)
-handler = RotatingFileHandler('check_connectivity.log',maxBytes=10000000, backupCount=2)
+handler = RotatingFileHandler(os.path.join(DIR_SCRIPT, 'check_connectivity.log'),
+                              maxBytes=10000000, backupCount=2)
 handler.setLevel(logging.INFO)
 formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 handler.setFormatter(formatter)
@@ -80,23 +80,21 @@ def check_connectivity_via_wwan(interface="wwan0"):
         return False
 
 
-def check_connectivity_via_ping(host, count=2):
-    successful_pings=0
+def check_connectivity_via_ping(host, count=PING_COUNT, timeout=PING_TIMEOUT):
+    """Devuelve la cantidad de respuestas al ping. Acotado con -W para que un
+    destino muerto no cuelgue la vuelta del loop."""
+    successful_pings = 0
     try:
         if sys.platform.startswith('win'):
-            param = '-n'
+            cmd = ['ping', host, '-n', str(count), '-w', str(timeout * 1000)]
         else:
-            param = '-c'
+            cmd = ['ping', host, '-c', str(count), '-W', str(timeout)]
 
-        process = subprocess.Popen(
-            ['ping', host, param, str(count)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
-        )
+        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         stdout, stderr = process.communicate()
-        if stderr:
-            logger.info( "Errores:")
-            logger.info( stderr)
+
+        if stderr and stderr.strip():
+            logger.info("ping %s: %s" % (host, " ".join(stderr.split())))
 
         if sys.platform.startswith('win'):
             successful_pings = len(re.findall(r'Reply from', stdout))
@@ -104,26 +102,29 @@ def check_connectivity_via_ping(host, count=2):
             successful_pings = len(re.findall(r'bytes from', stdout))
 
     except OSError as e:
-        logger.info( "Ocurrio un error al ejecutar el comando 'ping': %s" % str(e))
+        logger.info("Ocurrio un error al ejecutar el comando 'ping': %s" % str(e))
     except Exception as e:
-        logger.info( "Ocurrio un error: %s" % str(e))
+        logger.info("Ocurrio un error: %s" % str(e))
 
     return successful_pings
 
-def check_connectivity_via_socket(host, port):
-    sock = None
-    try:
-        # Intentar conectar al servidor
-        sock = socket.create_connection((host, port), timeout=10)
-        return True
-    except (socket.timeout, socket.error):
-        return False
-    finally:
-        if sock is not None:
-            try:
-                sock.close()
-            except Exception:
-                pass
+def hay_conectividad():
+    """Detector del watchdog. Devuelve (ok, motivo_de_falla).
+
+    Mirar solo si wwan0 tiene IP no alcanza: un PDP colgado deja la IP
+    asignada en la interfaz y el trafico igual no pasa, con lo que el
+    watchdog reporta Pong para siempre y nunca actua.
+
+    El orden importa: primero la IP, y si no esta se corta ahi, para no
+    pagar el timeout del ping en el caso obvio. El motivo se loguea para
+    distinguir "el modem perdio la IP" de "tiene IP pero no hay camino",
+    que es justo lo que falta saber del corte diario.
+    """
+    if not check_connectivity_via_wwan():
+        return (False, "wwan0 sin IP")
+    if check_connectivity_via_ping(HOST) <= 0:
+        return (False, "wwan0 con IP pero sin camino a %s" % HOST)
+    return (True, None)
 
 def horario_permite_rebootear():
     ahora = datetime.now()
@@ -295,6 +296,11 @@ def action_fix_sim_missing():
         logger.info("No se encuentra %s - se omite" % RUTA_FIX_SIM)
         return
 
+    for binario in ("python3", "timeout"):
+        if not run_command(['which', binario], "which %s" % binario)[0]:
+            logger.info("Falta '%s' en el equipo - no se puede correr el fix" % binario)
+            return
+
     sim_fix_intentado = True
     logger.info("sim-missing detectado - aplicando el workaround de QSIMVOL")
     # 'timeout' acota la corrida: subprocess de Python 2.7 no soporta timeout
@@ -359,11 +365,21 @@ def action_modem_hard_reset():
     Timing corregido al spec del EC25: RESET_N pide 150-460 ms. Los 5 s que
     habia antes se pasaban diez veces del maximo.
 
-    PENDIENTE: confirmar contra el esquematico del HAT a que pin del modulo
-    llega el GPIO 10. La evidencia dice que hoy no llega a ninguno: en la
-    caida del 15/08 esta accion corrio 272 veces y wwan0 no desaparecio ni
-    una sola vez. Por eso ahora se comprueba si el modulo se cae del bus
-    USB despues del pulso, que es lo unico que prueba que el reset llego.
+    OJO: el efecto del pulso VARIA entre equipos, asi que no hay que asumirlo
+    en ninguna direccion.
+      - En sensingBus199 el pulso resetea el modulo de verdad: /dev/ttyUSB1
+        desaparece del bus. Es lo que resuelve el corte diario a los ~4:15.
+      - En sensingBus88, durante la caida del 15/08, corrio 272 veces y wwan0
+        no desaparecio ni una sola vez.
+    Por eso esta la verificacion de mas abajo: es lo unico que prueba, equipo
+    por equipo, si el reset llego al modulo.
+
+    EFECTO COLATERAL confirmado en el 199: cuando el pulso si funciona, gpsd
+    pierde el ttyUSB y no lo vuelve a tomar, y el coche queda sin GPS hasta el
+    proximo reboot. Ese es el motivo de que este nivel este a los 20 min y no
+    a los 4: los cuatro escalones suaves de antes existen para que, si alguno
+    destraba el PDP, el pulso no llegue a ocurrir. NO adelantar este nivel.
+    (El arreglo del lado de gpsd va en aws_gps.py, no aca.)
     """
     puerto = buscar_puerto_usb_modem()
     logger.info("Pulso de %.2f s en el GPIO %s (modem en el bus USB: %s)" % (
@@ -404,6 +420,11 @@ def action_reboot():
     run_command(['reboot'])
 
 # (segundos sin conexion, nombre para el log, funcion)
+#
+# El orden no es cosmetico: los cuatro escalones suaves del medio existen para
+# que el pulso GPIO (nivel 7) sea el ultimo recurso antes del reboot. Cuando el
+# pulso funciona, se lleva puesto el GPS hasta el proximo reinicio. Si alguno de
+# los niveles blandos destraba el PDP, el coche no pierde el GPS ese dia.
 ACCIONES = [
     (120,  "bearer nmcli down/up",        action_bearer_reset),
     (240,  "soft reset ModemManager",     action_soft_reset),
@@ -415,17 +436,46 @@ ACCIONES = [
     (1620, "reboot (ultimo recurso)",     action_reboot),
 ]
 
+def verificar_conexion_nm():
+    """Deja escrito en el log si NetworkManager gestiona el modem.
+
+    El nivel 1 y todos los levantar_conexion() dependen de que exista una
+    conexion llamada CONEXION_NM. Si no existe, esos niveles quedan en no-ops
+    que solo loguean FALLO y la escalera queda MAS DEBIL que la version vieja.
+    Se chequea al arrancar para que el log conteste esto en el primer minuto
+    despues de deployar, sin tener que entrar al equipo.
+    """
+    ok, salida = run_command(['nmcli', '-t', '-f', 'NAME,TYPE,DEVICE',
+                              'connection', 'show'], "nmcli connection show", limite=0)
+    if not ok:
+        logger.info("AVISO: no se pudo consultar NetworkManager")
+        return False
+
+    lineas = [l for l in str(salida).splitlines() if l.strip()]
+    if CONEXION_NM in [l.split(":")[0] for l in lineas]:
+        logger.info("NetworkManager: la conexion '%s' existe" % CONEXION_NM)
+        return True
+
+    gsm = [l for l in lineas if ":gsm:" in l]
+    logger.info("AVISO: no existe la conexion '%s'. Los niveles que la usan van "
+                "a fallar. Conexiones gsm encontradas: %s"
+                % (CONEXION_NM, gsm if gsm else "ninguna"))
+    return False
+
 def main():
     global failure_start_time, action_done, sim_fix_intentado
 
     action_done = [False] * len(ACCIONES)
     logger.info("=== Watchdog iniciado (PID %s) - %d niveles de escalera ===" % (
         os.getpid(), len(ACCIONES)))
+    logger.info("Detector: wwan0 con IP + ping a %s" % HOST)
+    verificar_conexion_nm()
 
     while True:
-        if not check_connectivity_via_wwan():
+        conectado, motivo = hay_conectividad()
+        if not conectado:
             retry = RETRY_INTERVAL_FALLA
-            logger.info("No Pong Error")
+            logger.info("No Pong Error - %s" % motivo)
             if failure_start_time is None:
                 failure_start_time = time.time()
             else:
