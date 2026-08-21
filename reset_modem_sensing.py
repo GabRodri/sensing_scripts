@@ -1,4 +1,5 @@
 #!/usr/bin/python2.7
+# -*- coding: utf-8 -*-
 
 import os
 import subprocess
@@ -281,7 +282,7 @@ def razon_falla_modem():
 def action_fix_sim_missing():
     """Nivel 3: solo actua si ModemManager reporta 'sim-missing'.
 
-    No es un peldaño mas: es un diagnostico. Si la SIM no inicializa, ningun
+    No es un peldano mas: es un diagnostico. Si la SIM no inicializa, ningun
     reset del modulo, del USB ni de la Pi va a servir, asi que no tiene
     sentido seguir escalando a ciegas. El workaround (AT+QSIMVOL) esta en
     fix_sim_missing.py, que a su vez se niega a tocar un modem sano.
