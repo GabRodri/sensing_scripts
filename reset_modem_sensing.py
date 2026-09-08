@@ -339,15 +339,37 @@ def action_fix_sim_missing():
                     "(revisar portasim y soldaduras)")
 
 def action_modem_disable_enable():
-    """Nivel 3: disable/enable del modem (equivale a CFUN=4 / CFUN=1)."""
+    """Nivel 4: disable/enable del modem (equivale a CFUN=4 / CFUN=1).
+
+    OJO: si el --enable falla, el modem queda APAGADO, que es peor que como
+    estaba. Paso en el 88 el 08/09/2026: el --disable devolvio OK y el
+    --enable fallo con 'QMI protocol error (60): InvalidTransition', que es
+    lo que responde QMI cuando el modulo todavia esta en transicion.
+
+    Por eso: espera mas larga despues del disable, el enable se reintenta 3
+    veces con espera creciente, y si aun asi no vuelve queda escrito en el
+    log que el modem quedo deshabilitado.
+    """
     idx = indice_modem()
     if idx is None:
         return
-    run_command(['mmcli', '-m', idx, '--disable'])
-    time.sleep(5)
-    run_command(['mmcli', '-m', idx, '--enable'])
+
+    if not run_command(['mmcli', '-m', idx, '--disable'])[0]:
+        # si no se pudo apagar, no hay nada que reencender
+        return
     time.sleep(10)
-    levantar_conexion()
+
+    for intento in range(1, 4):
+        idx = indice_modem() or idx     # el indice puede cambiar en el medio
+        if run_command(['mmcli', '-m', idx, '--enable'],
+                       "mmcli -m %s --enable (intento %d/3)" % (idx, intento))[0]:
+            time.sleep(10)
+            levantar_conexion()
+            return
+        time.sleep(10 * intento)
+
+    logger.info("ATENCION: el modem quedo DESHABILITADO - el --enable fallo 3 veces. "
+                "El nivel 5 (--reset) deberia recuperarlo.")
 
 def action_modem_reset_mm():
     """Nivel 4: reset interno del modulo. Equivale al AT+CFUN=1,1 de
