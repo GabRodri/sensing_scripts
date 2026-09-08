@@ -1,4 +1,7 @@
 hosts.txt
+config_sensing_bug.py
 .idea/
 *.log
+*.log.*
 *.bak-*
+*.pcap
