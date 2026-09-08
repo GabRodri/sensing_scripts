@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 
 import os
+import socket
 import subprocess
 import time
 import sys
@@ -11,14 +12,27 @@ from datetime import datetime
 import logging
 from logging.handlers import RotatingFileHandler
 
-HOST = "10.220.0.17"       # broker MQTT: responde ICMP y es lo que importa que ande
-PING_COUNT = 2
-PING_TIMEOUT = 5           # -W, para que un destino muerto no cuelgue la vuelta del loop
+HOST = "10.220.0.17"       # broker MQTT: unico destino alcanzable en la VPN de chips
+PUERTO_BROKER = 1883       # es el puerto que usa aws_mqtt_sender
+TCP_TIMEOUT = 5            # para que un destino muerto no cuelgue la vuelta del loop
 
 RETRY_INTERVAL_OK = 30     # Tiempo en segundos entre chequeos cuando hay conexion
 RETRY_INTERVAL_FALLA = 15  # Tiempo en segundos entre chequeos cuando no hay conexion
 
 CONEXION_NM = "LTE"        # Nombre de la conexion en NetworkManager
+
+MAX_CICLOS_ESCALERA = 3    # Ciclos completos sin recuperar antes de rendirse.
+                           # Corta-circuitos: el detector depende de algo
+                           # externo (que el broker acepte TCP 1883) y eso
+                           # puede cambiar sin aviso. Ya paso: el ICMP al
+                           # broker andaba en agosto y el 08/09 estaba
+                           # bloqueado en toda la VPN, con lo que el watchdog
+                           # rebooteaba el coche cada 27 min con la conexion
+                           # sana. Si 3 escaleras completas -con GPIO y reboot-
+                           # no arreglaron nada, la cuarta tampoco: o es una
+                           # falla de hardware que necesita una persona, o el
+                           # detector esta equivocado. En los dos casos seguir
+                           # rebooteando no ayuda y castiga la SD.
 VENDOR_QUECTEL = "2c7c"    # idVendor del modem en el bus USB (Quectel EC25-AUX)
 
 GPIO_MODEM = "10"          # GPIO del HAT conectado al modem
@@ -53,6 +67,8 @@ logger.addHandler(consoleHandler)
 failure_start_time = None
 action_done = []
 sim_fix_intentado = False
+ciclos_agotados = 0
+en_observacion = False
 
 def check_connectivity_via_wwan(interface="wwan0"):
     try:
@@ -89,33 +105,34 @@ def check_connectivity_via_wwan(interface="wwan0"):
         return False
 
 
-def check_connectivity_via_ping(host, count=PING_COUNT, timeout=PING_TIMEOUT):
-    """Devuelve la cantidad de respuestas al ping. Acotado con -W para que un
-    destino muerto no cuelgue la vuelta del loop."""
-    successful_pings = 0
+def check_connectivity_via_tcp(host=HOST, port=PUERTO_BROKER, timeout=TCP_TIMEOUT):
+    """Abre una conexion TCP al broker. True si conecta.
+
+    NO usar ICMP en estos equipos. La VPN de chips lo bloquea entero: el
+    08/09/2026 en el 88, con el modem 'connected', LTE, 100% de senal y
+    aws_mqtt_sender publicando sin errores cada 20 s, el ping daba 100% de
+    perdida tanto al broker como al PROPIO GATEWAY del enlace (10.200.6.205).
+    Un detector por ping reporta falla permanente y termina rebooteando el
+    coche cada 27 minutos con la conexion sana.
+
+    TCP al 1883 es ademas lo que de verdad importa: es por donde publica el
+    equipo.
+    """
+    sock = None
     try:
-        if sys.platform.startswith('win'):
-            cmd = ['ping', host, '-n', str(count), '-w', str(timeout * 1000)]
-        else:
-            cmd = ['ping', host, '-c', str(count), '-W', str(timeout)]
-
-        process = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        stdout, stderr = process.communicate()
-
-        if stderr and stderr.strip():
-            logger.info("ping %s: %s" % (host, " ".join(stderr.split())))
-
-        if sys.platform.startswith('win'):
-            successful_pings = len(re.findall(r'Reply from', stdout))
-        else:
-            successful_pings = len(re.findall(r'bytes from', stdout))
-
-    except OSError as e:
-        logger.info("Ocurrio un error al ejecutar el comando 'ping': %s" % str(e))
+        sock = socket.create_connection((host, port), timeout=timeout)
+        return True
+    except (socket.timeout, socket.error):
+        return False
     except Exception as e:
-        logger.info("Ocurrio un error: %s" % str(e))
-
-    return successful_pings
+        logger.info("Error al conectar a %s:%s - %s" % (host, port, str(e)))
+        return False
+    finally:
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
 
 def hay_conectividad():
     """Detector del watchdog. Devuelve (ok, motivo_de_falla).
@@ -125,14 +142,13 @@ def hay_conectividad():
     watchdog reporta Pong para siempre y nunca actua.
 
     El orden importa: primero la IP, y si no esta se corta ahi, para no
-    pagar el timeout del ping en el caso obvio. El motivo se loguea para
-    distinguir "el modem perdio la IP" de "tiene IP pero no hay camino",
-    que es justo lo que falta saber del corte diario.
+    pagar el timeout del TCP en el caso obvio. El motivo se loguea para
+    distinguir "el modem perdio la IP" de "tiene IP pero no hay camino".
     """
     if not check_connectivity_via_wwan():
         return (False, "wwan0 sin IP")
-    if check_connectivity_via_ping(HOST) <= 0:
-        return (False, "wwan0 con IP pero sin camino a %s" % HOST)
+    if not check_connectivity_via_tcp():
+        return (False, "wwan0 con IP pero sin TCP a %s:%s" % (HOST, PUERTO_BROKER))
     return (True, None)
 
 def horario_permite_rebootear():
@@ -473,11 +489,12 @@ def verificar_conexion_nm():
 
 def main():
     global failure_start_time, action_done, sim_fix_intentado
+    global ciclos_agotados, en_observacion
 
     action_done = [False] * len(ACCIONES)
     logger.info("=== Watchdog iniciado (PID %s) - %d niveles de escalera ===" % (
         os.getpid(), len(ACCIONES)))
-    logger.info("Detector: wwan0 con IP + ping a %s" % HOST)
+    logger.info("Detector: wwan0 con IP + TCP a %s:%s" % (HOST, PUERTO_BROKER))
     verificar_conexion_nm()
 
     while True:
@@ -487,6 +504,17 @@ def main():
             logger.info("No Pong Error - %s" % motivo)
             if failure_start_time is None:
                 failure_start_time = time.time()
+            elif ciclos_agotados >= MAX_CICLOS_ESCALERA:
+                # Corta-circuitos: se deja de escalar, pero se sigue midiendo.
+                # Si la conexion vuelve sola, el else de abajo resetea todo.
+                retry = RETRY_INTERVAL_OK
+                if not en_observacion:
+                    en_observacion = True
+                    logger.info("=== %d ciclos completos de escalera sin recuperar. "
+                                "SE DEJA DE ESCALAR: mas resets y reboots no van a "
+                                "arreglar esto y castigan la SD. El equipo necesita "
+                                "revision, o el detector esta midiendo mal. ==="
+                                % ciclos_agotados)
             else:
                 elapsed_time = time.time() - failure_start_time
                 for i, (umbral, nombre, funcion) in enumerate(ACCIONES):
@@ -503,7 +531,9 @@ def main():
 
                         if i == len(ACCIONES) - 1:
                             # se agoto la escalera, se reinicia el ciclo
-                            logger.info("Escalera agotada - se reinicia el ciclo")
+                            ciclos_agotados += 1
+                            logger.info("Escalera agotada (ciclo %d de %d)" % (
+                                ciclos_agotados, MAX_CICLOS_ESCALERA))
                             failure_start_time = None
                             action_done = [False] * len(ACCIONES)
 
@@ -516,6 +546,10 @@ def main():
             failure_start_time = None
             action_done = [False] * len(ACCIONES)
             sim_fix_intentado = False
+            if en_observacion:
+                logger.info("Conexion recuperada - se reactiva la escalera")
+            ciclos_agotados = 0
+            en_observacion = False
 
         time.sleep(retry)
 
