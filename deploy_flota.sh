@@ -7,7 +7,13 @@
 #
 # Uso:
 #   ./deploy_flota.sh hosts.txt              # solo diagnostica, no toca nada
-#   ./deploy_flota.sh hosts.txt --apply      # despliega
+#   ./deploy_flota.sh hosts.txt --stop       # EMERGENCIA: para el watchdog en todos
+#   ./deploy_flota.sh hosts.txt --apply      # despliega la version corregida
+#
+# --stop existe para cortar un incidente rapido. Si el detector esta midiendo
+# mal, el watchdog rebootea los coches en loop; pararlo lleva segundos por
+# equipo, mientras que desplegar lleva minutos. Los coches siguen publicando
+# MQTT sin watchdog: se pierde la recuperacion automatica, no el servicio.
 #
 # hosts.txt: una IP por linea. Se ignoran lineas vacias y las que empiezan con #
 #   10.200.6.117   # bus 1148 / sensingBus199
@@ -50,8 +56,17 @@ while read -r linea; do
     echo "  --- estado actual ---"
     ssh "pi@$HOST" "uptime -s; last reboot | wc -l; tail -2 $DESTINO/check_connectivity.log 2>/dev/null | cut -c1-110"
 
+    if [ "$APPLY" = "--stop" ]; then
+        if ssh "pi@$HOST" "sudo systemctl stop $SERVICIO && systemctl is-active $SERVICIO || true" 2>&1 | tail -1 | grep -q inactive; then
+            echo "  >>> watchdog DETENIDO"; OK+=("$HOST")
+        else
+            echo "  >>> NO SE PUDO DETENER"; FALLO+=("$HOST stop")
+        fi
+        echo; continue
+    fi
+
     if [ "$APPLY" != "--apply" ]; then
-        echo "  (modo diagnostico: sin --apply no se toca nada)"; echo; continue
+        echo "  (modo diagnostico: sin --apply ni --stop no se toca nada)"; echo; continue
     fi
 
     echo "  --- backup ---"
@@ -84,7 +99,7 @@ while read -r linea; do
 
     echo "  --- reinicio del servicio ---"
     ssh "pi@$HOST" "sudo systemctl restart $SERVICIO"
-    sleep 75
+    sleep 20
 
     echo "  --- verificacion post-arranque ---"
     RES=$(ssh "pi@$HOST" "tail -30 $DESTINO/check_connectivity.log")
