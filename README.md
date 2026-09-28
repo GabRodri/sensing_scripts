@@ -176,6 +176,20 @@ cambiando la SIM: pasó de `failed` a `connected` con 91 % de señal.
 estado no es exactamente `failed/sim-missing`, sale sin hacer nada. Por defecto
 sólo diagnostica; hay que pasar `--apply`.
 
+**Ojo con `mmcli`:** colorea `state` y `failed reason` con códigos ANSI aunque la
+salida vaya a un pipe. Hasta el 22/09/2026 eso hacía que ni `fix_sim_missing.py`
+ni el nivel 3 de la escalera reconocieran nunca el `sim-missing`: comparaban
+`"\x1b[31msim-missing\x1b[0m"` contra `"sim-missing"`. Ambos limpian los
+códigos antes de comparar.
+
+**Seguimiento 22/09/2026, sensingOCPPCome:** el workaround duró cinco semanas.
+Volvió a `sim-missing` con `QSIMVOL=1` todavía guardado. Se probaron 0, 1 y 2,
+`CFUN=0/1` (responde `+CPIN: NOT INSERTED`), dos SIM distintas y limpieza de
+contactos, sin éxito. `AT+QUIMSLOT` no existe en el firmware `EC25AUXGAR08A15M1G`,
+así que no es un tema de slot. Señal 31/31 y temperatura normal: el módulo está
+sano y lo que falla es el camino eléctrico hasta la SIM. Va a banco: soldaduras
+del portasim y continuidad de VDD/CLK/RST/IO entre el módulo y el socket.
+
 ---
 
 ## Incidente del 08/09/2026

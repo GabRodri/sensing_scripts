@@ -44,7 +44,7 @@ import sys
 import time
 
 PUERTOS_AT = ["/dev/ttyUSB2", "/dev/ttyUSB3"]
-VALORES_QSIMVOL = ["1", "2"]     # rango soportado por el EC25: (0-2)
+VALORES_QSIMVOL = ["1", "2", "0"]  # rango del EC25: (0-2); 0 es el automatico de fabrica
 ESPERA_RESET = 50                # segundos que tarda el modulo tras CFUN=1,1
 
 
@@ -53,12 +53,21 @@ def log(msg):
     sys.stdout.flush()
 
 
+ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
+
+
+def sin_ansi(salida):
+    """mmcli colorea el 'state' (rojo si failed, verde si connected) aunque la
+    salida no vaya a una terminal. Sin esto 'failed' nunca es igual a 'failed'."""
+    return ANSI.sub("", salida.decode(errors="replace"))
+
+
 def sh(cmd, timeout=60):
     try:
         salida = subprocess.check_output(cmd, stderr=subprocess.STDOUT, timeout=timeout)
-        return 0, salida.decode(errors="replace")
+        return 0, sin_ansi(salida)
     except subprocess.CalledProcessError as e:
-        return e.returncode, e.output.decode(errors="replace")
+        return e.returncode, sin_ansi(e.output)
     except Exception as e:
         return -1, str(e)
 

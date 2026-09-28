@@ -292,7 +292,12 @@ def razon_falla_modem():
     ok, salida = run_command(['mmcli', '-m', idx], "mmcli -m %s" % idx, limite=120)
     if not ok:
         return None
-    match = re.search(r"failed reason:\s*(\S+)", str(salida))
+    # mmcli colorea 'state' y 'failed reason' con codigos ANSI aunque la salida
+    # vaya a un pipe: sin limpiarlos, 'sim-missing' nunca es igual a 'sim-missing'.
+    if isinstance(salida, bytes):
+        salida = salida.decode("utf-8", "replace")
+    salida = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", salida)
+    match = re.search(r"failed reason:\s*(\S+)", salida)
     return match.group(1) if match else None
 
 def action_fix_sim_missing():
